@@ -1,17 +1,17 @@
 locals {
-  enabled          = module.this.enabled
+  enabled          = module.context.enabled
   plan_enabled     = local.enabled && var.plan_enabled
   iam_role_enabled = local.enabled && var.iam_role_enabled
-  iam_role_name    = coalesce(var.iam_role_name, module.label_backup_role.id)
+  iam_role_name    = coalesce(var.iam_role_name, module.backup_role_context.id)
   iam_role_arn     = join("", var.iam_role_enabled ? aws_iam_role.default.*.arn : data.aws_iam_role.existing.*.arn)
   vault_enabled    = local.enabled && var.vault_enabled
-  vault_name       = coalesce(var.vault_name, module.this.id)
+  vault_name       = coalesce(var.vault_name, module.context.id)
   vault_id         = join("", local.vault_enabled ? aws_backup_vault.default.*.id : data.aws_backup_vault.existing.*.id)
   vault_arn        = join("", local.vault_enabled ? aws_backup_vault.default.*.arn : data.aws_backup_vault.existing.*.arn)
 
   # This is for backwards compatibility
   single_rule = [{
-    name                     = module.this.id
+    name                     = module.context.id
     schedule                 = var.schedule
     start_window             = var.start_window
     completion_window        = var.completion_window
@@ -31,43 +31,41 @@ locals {
   compatible_rules = length(var.rules) == 0 ? local.single_rule : [{ for k, v in local.single_rule[0] : k => v }]
 }
 
-data "aws_partition" "current" {}
-
-module "label_backup_role" {
-  source     = "cloudposse/label/null"
-  version    = "0.25.0"
-  enabled    = local.enabled
+module "backup_role_context" {
+  source     = "SevenPico/context/null"
+  version    = "2.0.0"
+  enabled    = module.context.enabled
   attributes = ["backup"]
 
-  context = module.this.context
+  context = module.context.self
 }
 
 resource "aws_backup_vault" "default" {
-  count       = local.vault_enabled ? 1 : 0
+  count       = module.context.enabled && var.vault_enabled ? 1 : 0
   name        = local.vault_name
   kms_key_arn = var.kms_key_arn
-  tags        = module.this.tags
+  tags        = module.context.tags
 }
 
 data "aws_backup_vault" "existing" {
-  count = local.enabled && var.vault_enabled == false ? 1 : 0
+  count = module.context.enabled && var.vault_enabled == false ? 1 : 0
   name  = local.vault_name
 }
 
 resource "aws_backup_plan" "default" {
-  count = local.plan_enabled ? 1 : 0
-  name  = var.plan_name_suffix == null ? module.this.id : format("%s_%s", module.this.id, var.plan_name_suffix)
+  count = module.context.enabled && var.plan_enabled ? 1 : 0
+  name  = var.plan_name_suffix == null ? module.context.id : format("%s_%s", module.context.id, var.plan_name_suffix)
 
   dynamic "rule" {
     for_each = length(var.rules) > 0 ? var.rules : local.compatible_rules
 
     content {
-      rule_name                = lookup(rule.value, "name", "${module.this.id}-${rule.key}")
+      rule_name                = lookup(rule.value, "name", "${module.context.id}-${rule.key}")
       target_vault_name        = join("", local.vault_enabled ? aws_backup_vault.default.*.name : data.aws_backup_vault.existing.*.name)
       schedule                 = lookup(rule.value, "schedule", null)
       start_window             = lookup(rule.value, "start_window", null)
       completion_window        = lookup(rule.value, "completion_window", null)
-      recovery_point_tags      = module.this.tags
+      recovery_point_tags      = module.context.tags
       enable_continuous_backup = lookup(rule.value, "enable_continuous_backup", null)
 
       dynamic "lifecycle" {
@@ -98,11 +96,11 @@ resource "aws_backup_plan" "default" {
     }
   }
 
-  tags = module.this.tags
+  tags = module.context.tags
 }
 
 data "aws_iam_policy_document" "assume_role" {
-  count = local.iam_role_enabled ? 1 : 0
+  count = module.context.enabled && var.iam_role_enabled ? 1 : 0
 
   statement {
     effect  = "Allow"
@@ -116,27 +114,27 @@ data "aws_iam_policy_document" "assume_role" {
 }
 
 resource "aws_iam_role" "default" {
-  count                = local.iam_role_enabled ? 1 : 0
+  count                = module.context.enabled && var.iam_role_enabled ? 1 : 0
   name                 = local.iam_role_name
   assume_role_policy   = join("", data.aws_iam_policy_document.assume_role.*.json)
-  tags                 = module.label_backup_role.tags
+  tags                 = module.backup_role_context.tags
   permissions_boundary = var.permissions_boundary
 }
 
 data "aws_iam_role" "existing" {
-  count = local.enabled && var.iam_role_enabled == false ? 1 : 0
+  count = module.context.enabled && var.iam_role_enabled == false ? 1 : 0
   name  = local.iam_role_name
 }
 
 resource "aws_iam_role_policy_attachment" "default" {
-  count      = local.iam_role_enabled ? 1 : 0
-  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+  count      = module.context.enabled && var.iam_role_enabled ? 1 : 0
+  policy_arn = "arn:${local.arn_prefix}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
   role       = join("", aws_iam_role.default.*.name)
 }
 
 resource "aws_backup_selection" "default" {
-  count         = local.plan_enabled ? 1 : 0
-  name          = module.this.id
+  count         = module.context.enabled && var.plan_enabled ? 1 : 0
+  name          = module.context.id
   iam_role_arn  = local.iam_role_arn
   plan_id       = join("", aws_backup_plan.default.*.id)
   resources     = var.backup_resources
