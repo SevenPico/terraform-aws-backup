@@ -128,7 +128,7 @@ data "aws_iam_role" "existing" {
 
 resource "aws_iam_role_policy_attachment" "default" {
   count      = module.context.enabled && var.iam_role_enabled ? 1 : 0
-  policy_arn = "arn:${local.arn_prefix}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+  policy_arn = "${local.arn_prefix}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
   role       = join("", aws_iam_role.default.*.name)
 }
 
