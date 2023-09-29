@@ -60,4 +60,3 @@ locals {
 data "aws_elb_service_account" "default" {
   count = module.context.enabled ? 1 : 0
 }
-
